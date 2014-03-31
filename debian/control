@@ -1,0 +1,12 @@
+Source: asterisk-chan-test
+Priority: extra
+Maintainer: XiVO Dev Team <dev@avencall.com>
+Build-Depends: debhelper (>= 7.0.50~), asterisk-dev (>= 11.6.0)
+Standards-Version: 3.8.4
+Section: comm
+
+Package: asterisk-chan-test
+Section: comm
+Architecture: any
+Depends: ${shlibs:Depends}, ${misc:Depends}, asterisk (>= 11.6.0)
+Description: Asterisk test channel driver
