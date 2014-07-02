@@ -133,17 +133,19 @@ static struct ast_channel_tech test_tech = {
 	.indicate = channel_tech_indicate,
 };
 
-static struct ast_channel *create_channel(const char *exten, const char *context, const char *cid_num, const char *cid_name)
+static struct ast_channel *create_channel(const char *exten, const char *context, const char *cid_num, const char *cid_name, const char *id)
 {
 	struct ast_channel *channel;
 	struct test_pvt *pvt;
+	char buf[48] = "";
+	sprintf(buf, "%08x", ast_atomic_fetchadd_int((int *)&chan_idx, +1));
 
 	pvt = test_pvt_create();
 	if (!pvt) {
 		return NULL;
 	}
 
-	channel = ast_channel_alloc(1, AST_STATE_DOWN, cid_num, cid_name, "", exten, context, NULL, 0, "Test/%08x", ast_atomic_fetchadd_int((int *)&chan_idx, +1));
+	channel = ast_channel_alloc(1, AST_STATE_DOWN, cid_num, cid_name, "", exten, context, NULL, 0, "SIP/pouet-%s", id ? id : buf);
 	if (!channel) {
 		test_pvt_free(pvt);
 		return NULL;
@@ -191,7 +193,7 @@ static char *cli_new(struct ast_cli_entry *e, int cmd, struct ast_cli_args *a)
 		cid_name = a->argv[5];
 	}
 
-	channel = create_channel(a->argv[2], a->argv[3], cid_num, cid_name);
+	channel = create_channel(a->argv[2], a->argv[3], cid_num, cid_name, NULL);
 	if (!channel) {
 		return CLI_FAILURE;
 	}
@@ -202,8 +204,49 @@ static char *cli_new(struct ast_cli_entry *e, int cmd, struct ast_cli_args *a)
 	return CLI_SUCCESS;
 }
 
+static char *cli_newid(struct ast_cli_entry *e, int cmd, struct ast_cli_args *a)
+{
+    struct ast_channel *channel;
+    const char *cid_name = DEFAULT_CID_NAME;
+    const char *cid_num = DEFAULT_CID_NUM;
+
+    switch (cmd) {
+    case CLI_INIT:
+        e->command = "test newid";
+        e->usage =
+                "Usage: test newid <channelid> <exten> <context> [cid_num] [cid_name]\n"
+                "       Create a new test channel.\n";
+        return NULL;
+    case CLI_GENERATE:
+        return NULL;
+    }
+
+    if (a->argc < 5) {
+        return CLI_SHOWUSAGE;
+    }
+
+    if (a->argc > 5) {
+        cid_num = a->argv[5];
+    }
+
+    if (a->argc > 6) {
+        cid_name = a->argv[7];
+    }
+
+    channel = create_channel(a->argv[3], a->argv[4], cid_num, cid_name, a->argv[2]);
+    if (!channel) {
+        return CLI_FAILURE;
+    }
+
+    ast_setstate(channel, AST_STATE_RING);
+    ast_pbx_start(channel);
+
+    return CLI_SUCCESS;
+}
+
 static struct ast_cli_entry cli_entries[] = {
 	AST_CLI_DEFINE(cli_new, "Create a new test channel"),
+    AST_CLI_DEFINE(cli_newid, "Create a new test channel with id"),
 };
 
 static int register_test_tech(void)
