@@ -1,12 +1,17 @@
 #!/bin/sh
 
-HOST="${HOST:-xivo}"
+HOST="${1:-$HOST}"
 
-rsync -v -rlp --exclude=.git ./ "$HOST:asterisk-lab"
+if [ -z "$HOST" ]; then
+    echo "usage: $(basename $0) <host>" >&2
+    exit 1
+fi
+
+rsync -v -rlp --exclude=.git ./ "$HOST:chan-test"
 ssh "$HOST" sh -e <<EOF
-cd asterisk-lab
+cd chan-test
 make
-/etc/init.d/asterisk stop
+service asterisk stop
 make install
-/etc/init.d/asterisk start
+service asterisk start
 EOF
