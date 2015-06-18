@@ -2,14 +2,16 @@
 #include <asterisk/channel.h>
 #include <asterisk/cli.h>
 #include <asterisk/format.h>
+#include <asterisk/format_cache.h>
+#include <asterisk/format_cap.h>
 #include <asterisk/module.h>
 #include <asterisk/pbx.h>
+#include <asterisk/stasis_channels.h>
 #include <sys/timerfd.h>
 
 #define DEFAULT_CID_NAME "Alice"
 #define DEFAULT_CID_NUM "555"
 
-static struct ast_format default_fmt;
 static struct ast_frame ulaw_frame;
 static unsigned int chan_idx = 0;
 
@@ -145,21 +147,25 @@ static struct ast_channel *create_channel(const char *exten, const char *context
 		return NULL;
 	}
 
-	channel = ast_channel_alloc(1, AST_STATE_DOWN, cid_num, cid_name, "", exten, context, NULL, 0, "SIP/pouet-%s", id ? id : buf);
+	channel = ast_channel_alloc(1, AST_STATE_DOWN, cid_num, cid_name, "", exten, context, NULL, NULL, 0, "SIP/pouet-%s", id ? id : buf);
 	if (!channel) {
 		test_pvt_free(pvt);
 		return NULL;
 	}
 
+	ast_channel_stage_snapshot(channel);
 	ast_channel_tech_set(channel, &test_tech);
 	ast_channel_tech_pvt_set(channel, pvt);
 	ast_channel_set_fd(channel, 0, pvt->timerfd);
 
-	ast_format_cap_set(ast_channel_nativeformats(channel), &default_fmt);
-	ast_format_copy(ast_channel_writeformat(channel), &default_fmt);
-	ast_format_copy(ast_channel_rawwriteformat(channel), &default_fmt);
-	ast_format_copy(ast_channel_readformat(channel), &default_fmt);
-	ast_format_copy(ast_channel_rawreadformat(channel), &default_fmt);
+	ast_format_cap_append(ast_channel_nativeformats(channel), ast_format_ulaw, 0);
+	ast_channel_set_writeformat(channel, ast_format_ulaw);
+	ast_channel_set_rawwriteformat(channel, ast_format_ulaw);
+	ast_channel_set_readformat(channel, ast_format_ulaw);
+	ast_channel_set_rawreadformat(channel, ast_format_ulaw);
+
+	ast_channel_stage_snapshot_done(channel);
+	ast_channel_unlock(channel);
 
 	return channel;
 }
@@ -251,12 +257,12 @@ static struct ast_cli_entry cli_entries[] = {
 
 static int register_test_tech(void)
 {
-	test_tech.capabilities = ast_format_cap_alloc();
+	test_tech.capabilities = ast_format_cap_alloc(AST_FORMAT_CAP_FLAG_DEFAULT);
 	if (!test_tech.capabilities) {
 		return -1;
 	}
 
-	ast_format_cap_add_all_by_type(test_tech.capabilities, AST_FORMAT_TYPE_AUDIO);
+	ast_format_cap_append_by_type(test_tech.capabilities, AST_MEDIA_TYPE_AUDIO);
 
 	return ast_channel_register(&test_tech);
 }
@@ -264,21 +270,21 @@ static int register_test_tech(void)
 static void unregister_test_tech(void)
 {
 	ast_channel_unregister(&test_tech);
-	ast_format_cap_destroy(test_tech.capabilities);
+	ao2_ref(test_tech.capabilities, -1);
 }
 
 static int load_module(void)
 {
-	ast_format_set(&default_fmt, AST_FORMAT_ULAW, 0);
-
 	ulaw_frame.frametype = AST_FRAME_VOICE;
-	ast_format_set(&ulaw_frame.subclass.format, AST_FORMAT_ULAW, 0);
+	ulaw_frame.subclass.format = ao2_bump(ast_format_ulaw);
 	ulaw_frame.datalen = 160;
 	ulaw_frame.samples = 160;
+	ulaw_frame.mallocd = 0;
 	ulaw_frame.data.ptr = (void *) ulaw_data;
 	ulaw_frame.len = 20;
 
 	if (register_test_tech()) {
+		ao2_ref(ulaw_frame.subclass.format, -1);
 		return AST_MODULE_LOAD_DECLINE;
 	}
 
