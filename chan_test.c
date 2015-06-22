@@ -137,18 +137,26 @@ static struct ast_channel_tech test_tech = {
 
 static struct ast_channel *create_channel(const char *exten, const char *context, const char *cid_num, const char *cid_name, const char *id)
 {
+	struct ast_format_cap *native_cap;
 	struct ast_channel *channel;
 	struct test_pvt *pvt;
 	char buf[48] = "";
 	sprintf(buf, "%08x", ast_atomic_fetchadd_int((int *)&chan_idx, +1));
 
+	native_cap = ast_format_cap_alloc(AST_FORMAT_CAP_FLAG_DEFAULT);
+	if (!native_cap) {
+		return NULL;
+	}
+
 	pvt = test_pvt_create();
 	if (!pvt) {
+		ao2_ref(native_cap, -1);
 		return NULL;
 	}
 
 	channel = ast_channel_alloc(1, AST_STATE_DOWN, cid_num, cid_name, "", exten, context, NULL, NULL, 0, "SIP/pouet-%s", id ? id : buf);
 	if (!channel) {
+		ao2_ref(native_cap, -1);
 		test_pvt_free(pvt);
 		return NULL;
 	}
@@ -158,7 +166,8 @@ static struct ast_channel *create_channel(const char *exten, const char *context
 	ast_channel_tech_pvt_set(channel, pvt);
 	ast_channel_set_fd(channel, 0, pvt->timerfd);
 
-	ast_format_cap_append(ast_channel_nativeformats(channel), ast_format_ulaw, 0);
+	ast_format_cap_append(native_cap, ast_format_ulaw, 0);
+	ast_channel_nativeformats_set(channel, native_cap);
 	ast_channel_set_writeformat(channel, ast_format_ulaw);
 	ast_channel_set_rawwriteformat(channel, ast_format_ulaw);
 	ast_channel_set_readformat(channel, ast_format_ulaw);
