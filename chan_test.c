@@ -336,34 +336,34 @@ static char *cli_newid(struct ast_cli_entry *e, int cmd, struct ast_cli_args *a)
 	const char *cid_name = DEFAULT_CID_NAME;
 	const char *cid_num = DEFAULT_CID_NUM;
 
-    switch (cmd) {
-    case CLI_INIT:
-        e->command = "test newid";
-        e->usage =
-                "Usage: test newid <channelid> <exten> <context> [cid_num] [cid_name]\n"
-                "       Create a new test channel.\n";
-        return NULL;
-    case CLI_GENERATE:
-        return NULL;
-    }
+	switch (cmd) {
+	case CLI_INIT:
+		e->command = "test newid";
+		e->usage =
+				"Usage: test newid <channelid> <exten> <context> [cid_num] [cid_name]\n"
+				"       Create a new test channel.\n";
+		return NULL;
+	case CLI_GENERATE:
+		return NULL;
+	}
 
-    if (a->argc < 5) {
-        return CLI_SHOWUSAGE;
-    }
+	if (a->argc < 5) {
+		return CLI_SHOWUSAGE;
+	}
 
-    if (a->argc > 5) {
-        cid_num = a->argv[5];
-    }
+	if (a->argc > 5) {
+		cid_num = a->argv[5];
+	}
 
-    if (a->argc > 6) {
-        cid_name = a->argv[6];
-    }
+	if (a->argc > 6) {
+		cid_name = a->argv[6];
+	}
 
 	if (action_new(a->argv[3], a->argv[4], cid_num, cid_name, a->argv[2], NULL)) {
 		return CLI_FAILURE;
 	}
 
-    return CLI_SUCCESS;
+	return CLI_SUCCESS;
 }
 
 static char *cli_answer(struct ast_cli_entry *e, int cmd, struct ast_cli_args *a)
