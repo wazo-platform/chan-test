@@ -1,4 +1,5 @@
 #include <asterisk.h>
+#include <asterisk/ari.h>
 #include <asterisk/channel.h>
 #include <asterisk/cli.h>
 #include <asterisk/format.h>
@@ -9,11 +10,21 @@
 #include <asterisk/stasis_channels.h>
 #include <sys/timerfd.h>
 
+#define ACTION_ANSWER_NOCHAN 1
+#define ACTION_ANSWER_BADTECH 2
+#define ACTION_ANSWER_BADSTATE 3
+
 #define DEFAULT_CID_NAME "Alice"
 #define DEFAULT_CID_NUM "555"
 
 static struct ast_frame ulaw_frame;
 static unsigned int chan_idx = 0;
+
+static struct ast_channel *create_channel(const char *exten, const char *context,
+	const char *cid_num, const char *cid_name,
+	const char *prefix, const char *id,
+	const struct ast_assigned_ids *assignedids, const struct ast_channel *requestor,
+	int autoanswer);
 
 /* 20 ms frame of a 200 Hz tone */
 static const unsigned char ulaw_data[] =
@@ -38,9 +49,10 @@ static const unsigned char ulaw_data[] =
 
 struct test_pvt {
 	int timerfd;
+	int autoanswer;
 };
 
-static struct test_pvt *test_pvt_create(void)
+static struct test_pvt *test_pvt_create(int autoanswer)
 {
 	struct test_pvt *pvt;
 
@@ -55,6 +67,8 @@ static struct test_pvt *test_pvt_create(void)
 		ast_free(pvt);
 		return NULL;
 	}
+
+	pvt->autoanswer = autoanswer;
 
 	return pvt;
 }
@@ -81,6 +95,45 @@ static int test_pvt_start_timer(struct test_pvt *pvt)
 	return 0;
 }
 
+static void answer_outbound_channel(struct ast_channel *channel)
+{
+	struct test_pvt *pvt = ast_channel_tech_pvt(channel);
+
+	test_pvt_start_timer(pvt);
+	ast_queue_control(channel, AST_CONTROL_ANSWER);
+}
+
+static struct ast_channel *channel_tech_requester(const char *type, struct ast_format_cap *cap, const struct ast_assigned_ids *assignedids, const struct ast_channel *requestor, const char *addr, int *cause)
+{
+	char *options;
+	int autoanswer = 0;
+
+	options = strrchr(addr, '/');
+	if (options) {
+		*options++ = '\0';
+
+		if (!strncmp(options, "autoanswer", 10)) {
+			autoanswer = 1;
+		}
+	}
+
+	return create_channel("s", "", DEFAULT_CID_NUM, DEFAULT_CID_NAME, addr, NULL, assignedids, requestor, autoanswer);
+}
+
+static int channel_tech_call(struct ast_channel *channel, const char *dest, int timeout)
+{
+	struct test_pvt *pvt = ast_channel_tech_pvt(channel);
+
+	ast_setstate(channel, AST_STATE_RINGING);
+	ast_queue_control(channel, AST_CONTROL_RINGING);
+
+	if (pvt->autoanswer) {
+		answer_outbound_channel(channel);
+	}
+
+	return 0;
+}
+
 static int channel_tech_hangup(struct ast_channel *channel)
 {
 	struct test_pvt *pvt = ast_channel_tech_pvt(channel);
@@ -89,6 +142,7 @@ static int channel_tech_hangup(struct ast_channel *channel)
 	ast_channel_tech_pvt_set(channel, NULL);
 
 	test_pvt_free(pvt);
+	ast_module_unref(ast_module_info->self);
 
 	return 0;
 }
@@ -128,6 +182,8 @@ static struct ast_channel_tech test_tech = {
 	.type = "Test",
 	.description = "Test Channel Driver",
 	.properties = AST_CHAN_TP_WANTSJITTER | AST_CHAN_TP_CREATESJITTER,
+	.requester = channel_tech_requester,
+	.call = channel_tech_call,
 	.hangup = channel_tech_hangup,
 	.answer = channel_tech_answer,
 	.read = channel_tech_read,
@@ -135,7 +191,11 @@ static struct ast_channel_tech test_tech = {
 	.indicate = channel_tech_indicate,
 };
 
-static struct ast_channel *create_channel(const char *exten, const char *context, const char *cid_num, const char *cid_name, const char *id)
+static struct ast_channel *create_channel(const char *exten, const char *context,
+	const char *cid_num, const char *cid_name,
+	const char *prefix, const char *id,
+	const struct ast_assigned_ids *assignedids, const struct ast_channel *requestor,
+	int autoanswer)
 {
 	struct ast_format_cap *native_cap;
 	struct ast_channel *channel;
@@ -148,13 +208,13 @@ static struct ast_channel *create_channel(const char *exten, const char *context
 		return NULL;
 	}
 
-	pvt = test_pvt_create();
+	pvt = test_pvt_create(autoanswer);
 	if (!pvt) {
 		ao2_ref(native_cap, -1);
 		return NULL;
 	}
 
-	channel = ast_channel_alloc(1, AST_STATE_DOWN, cid_num, cid_name, "", exten, context, NULL, NULL, 0, "SIP/pouet-%s", id ? id : buf);
+	channel = ast_channel_alloc(1, AST_STATE_DOWN, cid_num, cid_name, "", exten, context, assignedids, requestor, 0, "Test/%s-%s", prefix, id ? id : buf);
 	if (!channel) {
 		ao2_ref(native_cap, -1);
 		test_pvt_free(pvt);
@@ -176,12 +236,68 @@ static struct ast_channel *create_channel(const char *exten, const char *context
 	ast_channel_stage_snapshot_done(channel);
 	ast_channel_unlock(channel);
 
+	ast_module_ref(ast_module_info->self);
+
 	return channel;
+}
+
+static int action_answer(const char *name)
+{
+	struct ast_channel *channel;
+	int res = 0;
+
+	channel = ast_channel_get_by_name(name);
+	if (!channel) {
+		ast_log(LOG_DEBUG, "can't answer channel: no such channel: %s\n", name);
+		return ACTION_ANSWER_NOCHAN;
+	}
+
+	ast_channel_lock(channel);
+
+	if (ast_channel_tech(channel) != &test_tech) {
+		ast_log(LOG_DEBUG, "can't answer channel: not a chan_test channel\n");
+		res = ACTION_ANSWER_BADTECH;
+		goto unlock;
+	}
+
+	if (ast_channel_state(channel) != AST_STATE_RINGING) {
+		ast_log(LOG_DEBUG, "can't answer channel: channel is not ringing\n");
+		res = ACTION_ANSWER_BADSTATE;
+		goto unlock;
+	}
+
+	answer_outbound_channel(channel);
+
+unlock:
+	ast_channel_unlock(channel);
+	ast_channel_unref(channel);
+
+	return res;
+}
+
+static int action_new(const char *exten, const char *context, const char *cid_num, const char *cid_name, const char *id, char *res_uniqueid)
+{
+	struct ast_channel *channel;
+
+	channel = create_channel(exten, context, cid_num, cid_name, "auto", id, NULL, NULL, 0);
+	if (!channel) {
+		ast_log(LOG_DEBUG, "can't create channel: create_channel failed\n");
+		return -1;
+	}
+
+	if (res_uniqueid) {
+		/* caller is responsible for buffer to be at least AST_MAX_UNIQUEID long */
+		strcpy(res_uniqueid, ast_channel_uniqueid(channel));
+	}
+
+	ast_setstate(channel, AST_STATE_RING);
+	ast_pbx_start(channel);
+
+	return 0;
 }
 
 static char *cli_new(struct ast_cli_entry *e, int cmd, struct ast_cli_args *a)
 {
-	struct ast_channel *channel;
 	const char *cid_name = DEFAULT_CID_NAME;
 	const char *cid_num = DEFAULT_CID_NUM;
 
@@ -208,22 +324,17 @@ static char *cli_new(struct ast_cli_entry *e, int cmd, struct ast_cli_args *a)
 		cid_name = a->argv[5];
 	}
 
-	channel = create_channel(a->argv[2], a->argv[3], cid_num, cid_name, NULL);
-	if (!channel) {
+	if (action_new(a->argv[2], a->argv[3], cid_num, cid_name, NULL, NULL)) {
 		return CLI_FAILURE;
 	}
-
-	ast_setstate(channel, AST_STATE_RING);
-	ast_pbx_start(channel);
 
 	return CLI_SUCCESS;
 }
 
 static char *cli_newid(struct ast_cli_entry *e, int cmd, struct ast_cli_args *a)
 {
-    struct ast_channel *channel;
-    const char *cid_name = DEFAULT_CID_NAME;
-    const char *cid_num = DEFAULT_CID_NUM;
+	const char *cid_name = DEFAULT_CID_NAME;
+	const char *cid_num = DEFAULT_CID_NUM;
 
     switch (cmd) {
     case CLI_INIT:
@@ -245,23 +356,156 @@ static char *cli_newid(struct ast_cli_entry *e, int cmd, struct ast_cli_args *a)
     }
 
     if (a->argc > 6) {
-        cid_name = a->argv[7];
+        cid_name = a->argv[6];
     }
 
-    channel = create_channel(a->argv[3], a->argv[4], cid_num, cid_name, a->argv[2]);
-    if (!channel) {
-        return CLI_FAILURE;
-    }
-
-    ast_setstate(channel, AST_STATE_RING);
-    ast_pbx_start(channel);
+	if (action_new(a->argv[3], a->argv[4], cid_num, cid_name, a->argv[2], NULL)) {
+		return CLI_FAILURE;
+	}
 
     return CLI_SUCCESS;
 }
 
+static char *cli_answer(struct ast_cli_entry *e, int cmd, struct ast_cli_args *a)
+{
+	switch (cmd) {
+	case CLI_INIT:
+		e->command = "test answer";
+		e->usage =
+				"Usage: test answer <channel>\n"
+				"       Answer a test channel.\n";
+		return NULL;
+	case CLI_GENERATE:
+		return NULL;
+	}
+
+	if (a->argc < 3) {
+		return CLI_SHOWUSAGE;
+	}
+
+	if (action_answer(a->argv[2])) {
+		return CLI_FAILURE;
+	}
+
+	return CLI_SUCCESS;
+}
+
 static struct ast_cli_entry cli_entries[] = {
 	AST_CLI_DEFINE(cli_new, "Create a new test channel"),
-    AST_CLI_DEFINE(cli_newid, "Create a new test channel with id"),
+	AST_CLI_DEFINE(cli_newid, "Create a new test channel with id"),
+	AST_CLI_DEFINE(cli_answer, "Answer a test channel"),
+};
+
+static void ari_chan_test_answer_cb(
+	struct ast_tcptls_session_instance *ser,
+	struct ast_variable *get_params, struct ast_variable *path_vars,
+	struct ast_variable *headers, struct ast_ari_response *response)
+{
+	struct ast_variable *i;
+	const char *channel_id = NULL;
+
+	for (i = get_params; i; i = i->next) {
+		if (strcmp(i->name, "id") == 0) {
+			channel_id = (i->value);
+		}
+	}
+
+	if (!channel_id) {
+		ast_ari_response_error(response, 400, "Bad Request", "id is required");
+		return;
+	}
+
+	switch (action_answer(channel_id)) {
+	case 0:
+		ast_ari_response_no_content(response);
+		break;
+	case ACTION_ANSWER_NOCHAN:
+		ast_ari_response_error(response, 400, "Bad Request", "No such channel");
+		break;
+	case ACTION_ANSWER_BADTECH:
+		ast_ari_response_error(response, 400, "Bad Request", "Bad channel tech");
+		break;
+	case ACTION_ANSWER_BADSTATE:
+		ast_ari_response_error(response, 400, "Bad Request", "Bad channel state");
+		break;
+	default:
+		ast_ari_response_error(response, 500, "Internal Server Error", "Unexpected error");
+		break;
+	}
+}
+
+static void ari_chan_test_new_cb(
+	struct ast_tcptls_session_instance *ser,
+	struct ast_variable *get_params, struct ast_variable *path_vars,
+	struct ast_variable *headers, struct ast_ari_response *response)
+{
+	struct ast_variable *i;
+	const char *exten = NULL;
+	const char *context = NULL;
+	const char *cid_name = DEFAULT_CID_NAME;
+	const char *cid_num = DEFAULT_CID_NUM;
+	struct ast_json *json;
+	char res_uniqueid[AST_MAX_UNIQUEID];
+
+	for (i = get_params; i; i = i->next) {
+		if (strcmp(i->name, "exten") == 0) {
+			exten = (i->value);
+		} else if (strcmp(i->name, "context") == 0) {
+			context = (i->value);
+		} else if (strcmp(i->name, "cid_name") == 0) {
+			cid_name = (i->value);
+		} else if (strcmp(i->name, "cid_num") == 0) {
+			cid_num = (i->value);
+		}
+	}
+
+	if (!exten) {
+		ast_ari_response_error(response, 400, "Bad Request", "exten is required");
+		return;
+	} else if (!context) {
+		ast_ari_response_error(response, 400, "Bad Request", "context is required");
+		return;
+	}
+
+	switch (action_new(exten, context, cid_num, cid_name, NULL, res_uniqueid)) {
+	case 0:
+		json = ast_json_pack("{s: s}", "uniqueid", res_uniqueid);
+		if (!json) {
+			ast_ari_response_alloc_failed(response);
+		} else {
+			ast_ari_response_ok(response, json);
+		}
+		break;
+	default:
+		ast_ari_response_error(response, 500, "Internal Server Error", "Unexpected error");
+		break;
+	}
+}
+
+static struct stasis_rest_handlers ari_chan_test_answer = {
+	.path_segment = "answer",
+	.callbacks = {
+		[AST_HTTP_POST] = ari_chan_test_answer_cb,
+	},
+	.num_children = 0,
+	.children = {  }
+};
+
+static struct stasis_rest_handlers ari_chan_test_new = {
+	.path_segment = "new",
+	.callbacks = {
+		[AST_HTTP_POST] = ari_chan_test_new_cb,
+	},
+	.num_children = 0,
+	.children = {  }
+};
+
+static struct stasis_rest_handlers ari_chan_test = {
+	.path_segment = "chan_test",
+	.callbacks = {
+	},
+	.num_children = 2,
+	.children = { &ari_chan_test_new,&ari_chan_test_answer }
 };
 
 static int register_test_tech(void)
@@ -297,6 +541,10 @@ static int load_module(void)
 		return AST_MODULE_LOAD_DECLINE;
 	}
 
+	if (ast_ari_add_handler(&ari_chan_test)) {
+		ast_log(LOG_ERROR, "could not add ARI handler\n");
+	}
+
 	ast_cli_register_multiple(cli_entries, ARRAY_LEN(cli_entries));
 
 	return AST_MODULE_LOAD_SUCCESS;
@@ -305,6 +553,8 @@ static int load_module(void)
 static int unload_module(void)
 {
 	ast_cli_unregister_multiple(cli_entries, ARRAY_LEN(cli_entries));
+
+	ast_ari_remove_handler(&ari_chan_test);
 
 	unregister_test_tech();
 
@@ -315,4 +565,5 @@ AST_MODULE_INFO(ASTERISK_GPL_KEY, AST_MODFLAG_LOAD_ORDER, "Test Channel Driver",
 	.load = load_module,
 	.unload = unload_module,
 	.load_pri = AST_MODPRI_CHANNEL_DRIVER,
+	.nonoptreq = "res_ari",
 );
