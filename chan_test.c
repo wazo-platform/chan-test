@@ -16,13 +16,14 @@
 
 #define DEFAULT_CID_NAME "Alice"
 #define DEFAULT_CID_NUM "555"
+#define DEFAULT_PROTOCOL "Test"
 
 static struct ast_frame ulaw_frame;
 static unsigned int chan_idx = 0;
 
 static struct ast_channel *create_channel(const char *exten, const char *context,
 	const char *cid_num, const char *cid_name,
-	const char *prefix, const char *id,
+	const char *protocol, const char *prefix, const char *id,
 	const struct ast_assigned_ids *assignedids, const struct ast_channel *requestor,
 	int autoanswer);
 
@@ -107,6 +108,7 @@ static struct ast_channel *channel_tech_requester(const char *type, struct ast_f
 {
 	char *options;
 	int autoanswer = 0;
+	const char *protocol = DEFAULT_PROTOCOL;
 
 	options = strrchr(addr, '/');
 	if (options) {
@@ -117,7 +119,7 @@ static struct ast_channel *channel_tech_requester(const char *type, struct ast_f
 		}
 	}
 
-	return create_channel("s", "", DEFAULT_CID_NUM, DEFAULT_CID_NAME, addr, NULL, assignedids, requestor, autoanswer);
+	return create_channel("s", "", DEFAULT_CID_NUM, DEFAULT_CID_NAME, protocol, addr, NULL, assignedids, requestor, autoanswer);
 }
 
 static int channel_tech_call(struct ast_channel *channel, const char *dest, int timeout)
@@ -193,7 +195,7 @@ static struct ast_channel_tech test_tech = {
 
 static struct ast_channel *create_channel(const char *exten, const char *context,
 	const char *cid_num, const char *cid_name,
-	const char *prefix, const char *id,
+	const char *protocol, const char *prefix, const char *id,
 	const struct ast_assigned_ids *assignedids, const struct ast_channel *requestor,
 	int autoanswer)
 {
@@ -214,7 +216,7 @@ static struct ast_channel *create_channel(const char *exten, const char *context
 		return NULL;
 	}
 
-	channel = ast_channel_alloc(1, AST_STATE_DOWN, cid_num, cid_name, "", exten, context, assignedids, requestor, 0, "Test/%s-%s", prefix, id ? id : buf);
+	channel = ast_channel_alloc(1, AST_STATE_DOWN, cid_num, cid_name, "", exten, context, assignedids, requestor, 0, "%s/%s-%s", protocol, prefix, id ? id : buf);
 	if (!channel) {
 		ao2_ref(native_cap, -1);
 		test_pvt_free(pvt);
@@ -275,11 +277,11 @@ unlock:
 	return res;
 }
 
-static int action_new(const char *exten, const char *context, const char *cid_num, const char *cid_name, const char *id, char *res_uniqueid)
+static int action_new(const char *exten, const char *context, const char *cid_num, const char *cid_name, const char *protocol, const char *id, char *res_uniqueid)
 {
 	struct ast_channel *channel;
 
-	channel = create_channel(exten, context, cid_num, cid_name, "auto", id, NULL, NULL, 0);
+	channel = create_channel(exten, context, cid_num, cid_name, protocol, "auto", id, NULL, NULL, 0);
 	if (!channel) {
 		ast_log(LOG_DEBUG, "can't create channel: create_channel failed\n");
 		return -1;
@@ -300,12 +302,13 @@ static char *cli_new(struct ast_cli_entry *e, int cmd, struct ast_cli_args *a)
 {
 	const char *cid_name = DEFAULT_CID_NAME;
 	const char *cid_num = DEFAULT_CID_NUM;
+	const char *protocol = DEFAULT_PROTOCOL;
 
 	switch (cmd) {
 	case CLI_INIT:
 		e->command = "test new";
 		e->usage =
-				"Usage: test new <exten> <context> [cid_num] [cid_name]\n"
+				"Usage: test new <exten> <context> [cid_num] [cid_name] [protocol]\n"
 				"       Create a new test channel.\n";
 		return NULL;
 	case CLI_GENERATE:
@@ -324,7 +327,11 @@ static char *cli_new(struct ast_cli_entry *e, int cmd, struct ast_cli_args *a)
 		cid_name = a->argv[5];
 	}
 
-	if (action_new(a->argv[2], a->argv[3], cid_num, cid_name, NULL, NULL)) {
+	if (a->argc > 6) {
+		protocol = a->argv[6];
+	}
+
+	if (action_new(a->argv[2], a->argv[3], cid_num, cid_name, protocol, NULL, NULL)) {
 		return CLI_FAILURE;
 	}
 
@@ -335,12 +342,13 @@ static char *cli_newid(struct ast_cli_entry *e, int cmd, struct ast_cli_args *a)
 {
 	const char *cid_name = DEFAULT_CID_NAME;
 	const char *cid_num = DEFAULT_CID_NUM;
+	const char *protocol = DEFAULT_PROTOCOL;
 
 	switch (cmd) {
 	case CLI_INIT:
 		e->command = "test newid";
 		e->usage =
-				"Usage: test newid <channelid> <exten> <context> [cid_num] [cid_name]\n"
+				"Usage: test newid <channelid> <exten> <context> [cid_num] [cid_name] [protocol]\n"
 				"       Create a new test channel.\n";
 		return NULL;
 	case CLI_GENERATE:
@@ -359,7 +367,11 @@ static char *cli_newid(struct ast_cli_entry *e, int cmd, struct ast_cli_args *a)
 		cid_name = a->argv[6];
 	}
 
-	if (action_new(a->argv[3], a->argv[4], cid_num, cid_name, a->argv[2], NULL)) {
+	if (a->argc > 7) {
+		protocol = a->argv[7];
+	}
+
+	if (action_new(a->argv[3], a->argv[4], cid_num, cid_name, protocol, a->argv[2], NULL)) {
 		return CLI_FAILURE;
 	}
 
@@ -444,6 +456,7 @@ static void ari_chan_test_new_cb(
 	const char *context = NULL;
 	const char *cid_name = DEFAULT_CID_NAME;
 	const char *cid_num = DEFAULT_CID_NUM;
+	const char *protocol = DEFAULT_PROTOCOL;
 	struct ast_json *json;
 	char res_uniqueid[AST_MAX_UNIQUEID];
 
@@ -456,6 +469,8 @@ static void ari_chan_test_new_cb(
 			cid_name = (i->value);
 		} else if (strcmp(i->name, "cid_num") == 0) {
 			cid_num = (i->value);
+		} else if (strcmp(i->name, "protocol") == 0) {
+			protocol = (i->value);
 		}
 	}
 
@@ -467,7 +482,7 @@ static void ari_chan_test_new_cb(
 		return;
 	}
 
-	switch (action_new(exten, context, cid_num, cid_name, NULL, res_uniqueid)) {
+	switch (action_new(exten, context, cid_num, cid_name, protocol, NULL, res_uniqueid)) {
 	case 0:
 		json = ast_json_pack("{s: s}", "uniqueid", res_uniqueid);
 		if (!json) {
