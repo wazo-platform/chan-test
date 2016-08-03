@@ -6,7 +6,7 @@ Asterisk channel driver for testing purposes.
 Installing
 ==========
 
-    apt-get install build-essential asterisk-dev
+    apt-get install build-essential libssl-dev asterisk-dev
     make
     make install
 
