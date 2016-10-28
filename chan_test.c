@@ -298,6 +298,30 @@ static int action_new(const char *exten, const char *context, const char *cid_nu
 	return 0;
 }
 
+static int action_dtmf(const char *name, int digit)
+{
+	struct ast_frame frame = { .frametype = AST_FRAME_DTMF, };
+	struct ast_channel *channel;
+
+	channel = ast_channel_get_by_name(name);
+	if (!channel) {
+		ast_log(LOG_DEBUG, "can't answer channel: no such channel: %s\n", name);
+		return -1;
+	}
+
+	/* no need to actually check the channel's, i.e. it's going to work for other tech too */
+	frame.subclass.integer = digit;
+	frame.src = "test";
+	frame.len = 100;
+	frame.offset = 0;
+	frame.datalen = 0;
+	ast_queue_frame(channel, &frame);
+
+	ast_channel_unref(channel);
+
+	return 0;
+}
+
 static char *cli_new(struct ast_cli_entry *e, int cmd, struct ast_cli_args *a)
 {
 	const char *cid_name = DEFAULT_CID_NAME;
@@ -402,10 +426,46 @@ static char *cli_answer(struct ast_cli_entry *e, int cmd, struct ast_cli_args *a
 	return CLI_SUCCESS;
 }
 
+static char *cli_dtmf(struct ast_cli_entry *e, int cmd, struct ast_cli_args *a)
+{
+	int digit;
+
+	switch (cmd) {
+	case CLI_INIT:
+		e->command = "test dtmf";
+		e->usage =
+				"Usage: test dtmf <channel> <digit>\n"
+				"       Add a DTMF to a channel's frame queue.\n";
+		return NULL;
+	case CLI_GENERATE:
+		if (a->pos == 2) {
+			return ast_complete_channels(a->line, a->word, a->pos, a->n, 2);
+		}
+
+		return NULL;
+	}
+
+	if (a->argc < 4) {
+		return CLI_SHOWUSAGE;
+	}
+
+	if (strlen(a->argv[3]) != 1) {
+		ast_cli(a->fd, "<digit> must be exactly 1 character\n");
+		return CLI_FAILURE;
+	}
+
+	digit = a->argv[3][0];
+	if (action_dtmf(a->argv[2], digit)) {
+		return CLI_FAILURE;
+	}
+
+	return CLI_SUCCESS;
+}
 static struct ast_cli_entry cli_entries[] = {
 	AST_CLI_DEFINE(cli_new, "Create a new test channel"),
 	AST_CLI_DEFINE(cli_newid, "Create a new test channel with id"),
 	AST_CLI_DEFINE(cli_answer, "Answer a test channel"),
+	AST_CLI_DEFINE(cli_dtmf, "Add a DTMF to a channel's frame queue"),
 };
 
 static void ari_chan_test_answer_cb(
