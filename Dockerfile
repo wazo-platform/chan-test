@@ -1,4 +1,4 @@
-FROM xivo/asterisk
+FROM wazopbx/asterisk
 MAINTAINER dev+docker@proformatique.com
 
 RUN apt-get -q update && apt-get -q -y install \
