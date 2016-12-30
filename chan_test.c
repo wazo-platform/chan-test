@@ -1,3 +1,7 @@
+/*
+ * Copyright 2014-2016 The Wazo Authors  (see the AUTHORS file)
+ */
+
 #include <asterisk.h>
 #include <asterisk/ari.h>
 #include <asterisk/channel.h>

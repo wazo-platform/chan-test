@@ -1,5 +1,5 @@
 FROM wazopbx/asterisk
-MAINTAINER dev+docker@proformatique.com
+MAINTAINER Wazo Maintainers <dev.wazo@gmail.com>
 
 RUN apt-get -q update && apt-get -q -y install \
     asterisk-dev \
