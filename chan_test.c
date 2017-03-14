@@ -475,7 +475,8 @@ static struct ast_cli_entry cli_entries[] = {
 static void ari_chan_test_answer_cb(
 	struct ast_tcptls_session_instance *ser,
 	struct ast_variable *get_params, struct ast_variable *path_vars,
-	struct ast_variable *headers, struct ast_ari_response *response)
+	struct ast_variable *headers, struct ast_json *body,
+	struct ast_ari_response *response)
 {
 	struct ast_variable *i;
 	const char *channel_id = NULL;
@@ -513,7 +514,8 @@ static void ari_chan_test_answer_cb(
 static void ari_chan_test_new_cb(
 	struct ast_tcptls_session_instance *ser,
 	struct ast_variable *get_params, struct ast_variable *path_vars,
-	struct ast_variable *headers, struct ast_ari_response *response)
+	struct ast_variable *headers, struct ast_json *body,
+	struct ast_ari_response *response)
 {
 	struct ast_variable *i;
 	const char *exten = NULL;
