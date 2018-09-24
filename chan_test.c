@@ -1,5 +1,5 @@
 /*
- * Copyright 2014-2017 The Wazo Authors  (see the AUTHORS file)
+ * Copyright 2014-2018 The Wazo Authors  (see the AUTHORS file)
  * SPDX-License-Identifier: GPL-3.0+
  */
 
@@ -7,6 +7,7 @@
 #include <asterisk/ari.h>
 #include <asterisk/channel.h>
 #include <asterisk/cli.h>
+#include <asterisk/musiconhold.h>
 #include <asterisk/format.h>
 #include <asterisk/format_cache.h>
 #include <asterisk/format_cap.h>
@@ -182,6 +183,18 @@ static int channel_tech_write(struct ast_channel *channel, struct ast_frame *fra
 
 static int channel_tech_indicate(struct ast_channel *channel, int ind, const void *data, size_t datalen)
 {
+  switch (ind) {
+  case AST_CONTROL_HOLD:
+    ast_moh_start(channel, data, NULL);
+    break;
+  case AST_CONTROL_UNHOLD:
+    ast_moh_stop(channel);
+    break;
+  default:
+    break;
+
+  }
+
 	return 0;
 }
 
