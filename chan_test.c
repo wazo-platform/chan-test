@@ -525,6 +525,49 @@ static void ari_chan_test_answer_cb(
 	}
 }
 
+static void ari_chan_test_dtmf_cb(
+	struct ast_tcptls_session_instance *ser,
+	struct ast_variable *get_params,
+	struct ast_variable *path_vars,
+	struct ast_variable *headers,
+	struct ast_json *body,
+	struct ast_ari_response *response)
+{
+	struct ast_variable *i;
+	const char *channel_id = NULL;
+	const char *digit = NULL;
+
+	for (i = get_params; i; i = i->next) {
+		if (strcmp(i->name, "id") == 0) {
+			channel_id = (i->value);
+		} else if (strcmp(i->name, "digit") == 0) {
+			digit = (i->value);
+		}
+	}
+
+	if (!channel_id) {
+		ast_ari_response_error(response, 400, "Bad Request", "id is required");
+		return;
+	}
+
+	if (!digit) {
+		ast_ari_response_error(response, 400, "Bad Request", "digit is required");
+		return;
+	}
+
+	switch (action_dtmf(channel_id, digit[0])) {
+	case 0:
+		ast_ari_response_no_content(response);
+		break;
+	case -1:
+		ast_ari_response_error(response, 400, "Bad Request", "No such channel");
+		break;
+	default:
+		ast_ari_response_error(response, 500, "Internal Server Error", "Unexpected error");
+		break;
+	}
+}
+
 static void ari_chan_test_new_cb(
 	struct ast_tcptls_session_instance *ser,
 	struct ast_variable *get_params, struct ast_variable *path_vars,
@@ -586,6 +629,15 @@ static struct stasis_rest_handlers ari_chan_test_answer = {
 	.children = {  }
 };
 
+static struct stasis_rest_handlers ari_chan_test_dtmf = {
+	.path_segment = "dtmf",
+	.callbacks = {
+		[AST_HTTP_POST] = ari_chan_test_dtmf_cb,
+	},
+	.num_children = 0,
+	.children = {  }
+};
+
 static struct stasis_rest_handlers ari_chan_test_new = {
 	.path_segment = "new",
 	.callbacks = {
@@ -599,8 +651,12 @@ static struct stasis_rest_handlers ari_chan_test = {
 	.path_segment = "chan_test",
 	.callbacks = {
 	},
-	.num_children = 2,
-	.children = { &ari_chan_test_new,&ari_chan_test_answer }
+	.num_children = 3,
+	.children = {
+		&ari_chan_test_new,
+		&ari_chan_test_answer,
+		&ari_chan_test_dtmf,
+	}
 };
 
 static int register_test_tech(void)
