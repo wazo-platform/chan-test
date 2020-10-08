@@ -1,4 +1,4 @@
-FROM wazopbx/asterisk
+FROM wazoplatform/asterisk
 
 RUN apt-get -q update && apt-get -q -y install \
     asterisk-dev \
