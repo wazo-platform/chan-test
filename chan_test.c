@@ -198,11 +198,17 @@ static int channel_tech_indicate(struct ast_channel *channel, int ind, const voi
 	return 0;
 }
 
+static int channel_tech_devicestate(const char *data)
+{
+	return AST_DEVICE_NOT_INUSE;
+}
+
 static struct ast_channel_tech test_tech = {
 	.type = "Test",
 	.description = "Test Channel Driver",
 	.properties = AST_CHAN_TP_WANTSJITTER | AST_CHAN_TP_CREATESJITTER,
 	.requester = channel_tech_requester,
+	.devicestate = channel_tech_devicestate,
 	.call = channel_tech_call,
 	.hangup = channel_tech_hangup,
 	.answer = channel_tech_answer,
