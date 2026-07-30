@@ -3,6 +3,7 @@ pipeline {
   triggers {
     githubPush()
     pollSCM('H H * * *')
+    upstream(upstreamProjects: 'asterisk', threshold: hudson.model.Result.SUCCESS)
   }
   environment {
     MAIL_RECIPIENTS = 'dev+tests-reports@wazo.community'
@@ -15,7 +16,7 @@ pipeline {
   stages {
     stage('Docker build') {
       steps {
-        sh "docker build --no-cache -t wazoplatform/${JOB_NAME}:latest ."
+        sh "docker build --no-cache --pull -t wazoplatform/${JOB_NAME}:latest ."
       }
     }
     stage('Docker publish') {
